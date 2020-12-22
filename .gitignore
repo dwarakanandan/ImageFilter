@@ -3,3 +3,9 @@
 
 #build
 build/
+
+#output png
+output*.png
+
+#NUL stats
+NUL
