@@ -1,5 +1,6 @@
 #include "cuda_image.h"
 #include "../kernel/kernel_cu.h"
+#include "../kernel/filter.h"
 
 template <typename T> void CudaImage<T>::dealloc()
 {
@@ -351,14 +352,12 @@ template <typename T> void CudaImage<T>::CopyComponent(int target, const CudaIma
 
 template <typename T> void CudaImage<T>::GaussianFilterSTX(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add)
 {
-	std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
-	exit(-1);
+	GaussianFilterSTX_GPU(target, source, width, height, scale, d, boundary, add);
 }
 
 template <typename T> void CudaImage<T>::GaussianFilterSTY(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add)
 {
-	std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
-	exit(-1);
+	GaussianFilterSTY_GPU(target, source, width, height, scale, d, boundary, add);
 }
 
 template <typename T> void CudaImage<T>::GaussianSplatSTX(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add)
