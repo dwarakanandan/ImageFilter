@@ -362,14 +362,18 @@ template <typename T> void CudaImage<T>::GaussianFilterSTY(T* target, T* source,
 
 template <typename T> void CudaImage<T>::GaussianSplatSTX(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add)
 {
-	std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
-	exit(-1);
+	GaussianSplatSTX_GPU(target, source, width, height, scale, d, boundary, add);
+	// std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
+	
+	// exit(-1);
 }
 
 template <typename T> void CudaImage<T>::GaussianSplatSTY(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add)
 {
-	std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
-	exit(-1);
+	GaussianSplatSTY_GPU(target, source, width, height, scale, d, boundary, add);
+	// std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
+	
+	// exit(-1);
 }
 
 template class CudaImage<float>;
