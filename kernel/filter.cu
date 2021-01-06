@@ -131,7 +131,7 @@ template void GaussianFilterSTY_GPU<double>(double* target, double* source, int 
 template void GaussianFilterSTX_GPU<float>(float* target, float* source, int width, int height, float scale, float d, BoundaryCondition boundary, bool add);
 template void GaussianFilterSTX_GPU<double>(double* target, double* source, int width, int height, double scale, double d, BoundaryCondition boundary, bool add);
 
-//------------------------------------------------------------------------------------------------------------//
+//********************************************************************************************************************//
 
 template <typename T>
 struct CudaAtomicAdd {
@@ -184,26 +184,51 @@ struct CudaAtomicAdd <double>
 	#endif
 	}
 };
+//********************************************************************************************************************//
+double gaussian_host(double x0, double size)
+{
+	double d = x0 / size;
+	return exp(-0.5 * d * d);
+}
 
-
-__constant__ COMPUTE_TYPE r_weight_const;
+__constant__ COMPUTE_TYPE r_weight_const_X;
+__constant__ COMPUTE_TYPE r_weight_const_Y;
 
 template <typename T>
-void setConstantMemWeight(T d,T scale){
-	T weight = gaussian(d, scale);
+void setConstantMemWeight_X_GPU(T d,T scale){
+	T weight = gaussian_host(d, scale);
 	int bound = (int)floor(GAUSSIAN_RANGE * scale);
 		for (int x0 = 1; x0 <= bound; x0++)
 		{
-			T ga = gaussian(-x0 + d, scale);
-			T gb = gaussian(x0 + d, scale);
+			T ga = gaussian_host(-x0 + d, scale);
+			T gb = gaussian_host(x0 + d, scale);
 			weight += ga + gb;
 		}
 	T r_weight = 1.0f / weight;
-	cudaMemcpyToSymbol(r_weight_const,&r_weight,sizeof(T));
-	std::cout<<"ConstantMem Done";
+	cudaMemcpyToSymbol(r_weight_const_X,&r_weight,sizeof(T),0,cudaMemcpyHostToDevice);
+	// std::cout<<"ConstantMem Done";
 }
+template void setConstantMemWeight_X_GPU<float>(float d,float scale);
+template void setConstantMemWeight_X_GPU<double>(double d,double scale);
 
+template <typename T>
+void setConstantMemWeight_Y_GPU(T d,T scale){
+	T weight = gaussian_host(d, scale);
+	int bound = (int)floor(GAUSSIAN_RANGE * scale);
+		for (int x0 = 1; x0 <= bound; x0++)
+		{
+			T ga = gaussian_host(-x0 + d, scale);
+			T gb = gaussian_host(x0 + d, scale);
+			weight += ga + gb;
+		}
+	T r_weight = 1.0f / weight;
+	cudaMemcpyToSymbol(r_weight_const_Y,&r_weight,sizeof(T),0,cudaMemcpyHostToDevice);
+	// std::cout<<"ConstantMem Done";
+}
+template void setConstantMemWeight_Y_GPU<float>(float d,float scale);
+template void setConstantMemWeight_Y_GPU<double>(double d,double scale);
 
+//********************************************************************************************************************//
 template <typename T>
 __global__ void GaussianSplatSTX_GPU_kernel(T* __restrict__ target,const T* __restrict__ source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add) {
     int bound = (int)floor(GAUSSIAN_RANGE * scale);
@@ -247,14 +272,14 @@ __global__ void GaussianSplatSTX_GPU_kernel(T* __restrict__ target,const T* __re
 	}
 	else // if (boundary == BoundaryCondition::Border)
 	{
-		T weight = gaussian(d, scale);
-		for (int x0 = 1; x0 <= bound; x0++)
-		{
-			T ga = gaussian(-x0 + d, scale);
-			T gb = gaussian(x0 + d, scale);
-			weight += ga + gb;
-		}
-		T r_weight = 1.0f / weight;
+		// T weight = gaussian(d, scale);
+		// for (int x0 = 1; x0 <= bound; x0++)
+		// {
+		// 	T ga = gaussian(-x0 + d, scale);
+		// 	T gb = gaussian(x0 + d, scale);
+		// 	weight += ga + gb;
+		// }
+		// T r_weight = 1.0f / weight;
 		// for (int y = 0; y < height; y++)
 		// {
 		// 	for (int x = 0; x < width; x++)
@@ -264,7 +289,7 @@ __global__ void GaussianSplatSTX_GPU_kernel(T* __restrict__ target,const T* __re
         // }
         // printf("X,WeightDone,%d,%d",x,y);
         // fflush(stdout);
-        T t = source[x + y * width] * r_weight;
+        T t = source[x + y * width] * r_weight_const_X;
         for (int x0 = 1; x0 <= bound; x0++)
         {
             T ga = gaussian(-x0 + d, scale);
@@ -293,7 +318,7 @@ void GaussianSplatSTX_GPU(T* target,const T* source, int width, int height, T sc
 	grid_size.x = (width + block_size.x - 1) / block_size.x;
 	grid_size.y = (height + block_size.y - 1) / block_size.y;
     grid_size.z = 1;
-    //setConstantMemWeight((T)d,(T)scale);
+    setConstantMemWeight_X_GPU((T)d,(T)scale);
     GaussianSplatSTX_GPU_kernel<<<grid_size, block_size>>>((T *)target, (T *)source, width, height, (T)scale, (T)d, boundary, add);
     CHECK_LAUNCH_ERROR();
 }
@@ -306,23 +331,23 @@ __global__ void GaussianSplatSTY_GPU_kernel(T* __restrict__ target,const T* __re
     int y = threadIdx.y + blockIdx.y * blockDim.y;
 	// if (!add) std::fill(target, target + width * height, T(0));
     CudaAtomicAdd<T> caa;
-	T weight = T(0);
-	T r_weight = T(1);
-	if (boundary != BoundaryCondition::Renormalize)
-	{
-		weight = gaussian(d, scale);
+	// T weight = T(0);
+	// T r_weight = T(1);
+	// if (boundary != BoundaryCondition::Renormalize)
+	// {
+	// 	weight = gaussian(d, scale);
 
-		for (int y0 = 1; y0 <= bound; y0++)
-		{
-			T ga = gaussian(-y0 + d, scale);
-			T gb = gaussian(y0 + d, scale);
-			weight += ga + gb;
-		}
-		r_weight = 1.0f / weight;
-    }
+	// 	for (int y0 = 1; y0 <= bound; y0++)
+	// 	{
+	// 		T ga = gaussian(-y0 + d, scale);
+	// 		T gb = gaussian(y0 + d, scale);
+	// 		weight += ga + gb;
+	// 	}
+	// 	r_weight = 1.0f / weight;
+    // }
     //printf("Y,WeightDone,%d,%d",x,y);
     // fflush(stdout);
-	T t = source[x + y * width] * r_weight;
+	T t = source[x + y * width] * r_weight_const_Y;
     for (int y0 = 1; y0 <= bound; y0++)
     {
         T ga = gaussian(-y0 + d, scale);
@@ -337,7 +362,11 @@ __global__ void GaussianSplatSTY_GPU_kernel(T* __restrict__ target,const T* __re
     T g = gaussian(d, scale);
     caa.AtomicAdd(&target[x + y * width],t*g);
     // target[x + y * width] += t * g;
+	// if (boundary == BoundaryCondition::Renormalize)
+	// {
 
+
+	// }
 
 	// for (int y = 0; y < height; y++)
 	// {
@@ -393,7 +422,7 @@ void GaussianSplatSTY_GPU(T* target,const T* source, int width, int height, T sc
 	grid_size.x = (width + block_size.x - 1) / block_size.x;
 	grid_size.y = (height + block_size.y - 1) / block_size.y;
     grid_size.z = 1;
-    
+    setConstantMemWeight_Y_GPU((T)d,(T)scale);
 	GaussianSplatSTY_GPU_kernel<<<grid_size, block_size>>>((T *)target, (T *)source, width, height, (T)scale, (T)d, boundary, add);
 	CHECK_LAUNCH_ERROR();
 }
@@ -403,6 +432,8 @@ template void GaussianSplatSTY_GPU<double>(double* target,const double* source, 
 
 template void GaussianSplatSTX_GPU<float>(float* target,const float* source, int width, int height, float scale, float d, BoundaryCondition boundary, bool add);
 template void GaussianSplatSTX_GPU<double>(double* target,const double* source, int width, int height, double scale, double d, BoundaryCondition boundary, bool add);
+
+//********************************************************************************************************************//
 
 template <typename T>
 __global__ void Gamma_GPU_Kernel(T* target,int target_width,T gamma)
@@ -436,7 +467,7 @@ void Gamma_GPU(T* target, int target_width,int target_height,T gamma)
 template void Gamma_GPU<float>(float* target,  int target_width, int target_height,float gamma);
 template void Gamma_GPU<double>(double* target,  int target_width, int target_height,double gamma);
 
-
+//********************************************************************************************************************//
 
 
 template <typename T> 
@@ -513,3 +544,4 @@ void ScaleFast_GPU(T* target, T* source, int target_width, int target_height,  i
 
 template void ScaleFast_GPU<float>(float* target,float* source, int target_width, int target_height, int source_width, int source_height);
 template void ScaleFast_GPU<double>(double* target, double* source, int target_width, int target_height, int source_width, int source_height);
+//********************************************************************************************************************//
