@@ -132,7 +132,7 @@ private:
 
 	void GaussianFilterSTY(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add);
 
-	void GaussianSplatSTX(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add);
+	void GaussianSplatSTX(T* target,const T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add);
 
-	void GaussianSplatSTY(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add);
+	void GaussianSplatSTY(T* target,const T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add);
 };
