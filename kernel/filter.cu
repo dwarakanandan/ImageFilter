@@ -1,12 +1,13 @@
-
 #include "filter.h"
 #include "cuda.h"
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <stdio.h>
+
 #define BLOCK_SIZE 32
 #define GAUSSIAN_RANGE 3
 #define COMPUTE_TYPE double
+
 __device__ double gaussian(double x0, double size)
 {
 	double d = x0 / size;
@@ -58,14 +59,14 @@ __global__ void GaussianFilterSTY_GPU_kernel(T* target, T* source, int width, in
     }
 
     if (add) target[x + y * width] += t * r_weight;
-	else target[x + y * width] = t * r_weight;
+    else target[x + y * width] = t * r_weight;
 }
 
 template <typename T>
 void GaussianFilterSTY_GPU(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add) {
     dim3 block_size;
-	block_size.x = 16;
-	block_size.y = 16;
+	block_size.x = BLOCK_SIZE;
+	block_size.y = BLOCK_SIZE;
 	block_size.z = 1;
 
 	dim3 grid_size;
@@ -106,14 +107,14 @@ __global__ void GaussianFilterSTX_GPU_kernel(T* target, T* source, int width, in
     }
 
     if (add) target[x + y * width] += t * r_weight;
-	else target[x + y * width] = t * r_weight;
+    else target[x + y * width] = t * r_weight;
 }
 
 template <typename T>
 void GaussianFilterSTX_GPU(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add) {
     dim3 block_size;
-	block_size.x = 16;
-	block_size.y = 16;
+	block_size.x = BLOCK_SIZE;
+	block_size.y = BLOCK_SIZE;
 	block_size.z = 1;
 
 	dim3 grid_size;
@@ -121,8 +122,8 @@ void GaussianFilterSTX_GPU(T* target, T* source, int width, int height, T scale,
 	grid_size.y = (height + block_size.y - 1) / block_size.y;
     grid_size.z = 1;
     
-	GaussianFilterSTX_GPU_kernel<<<grid_size, block_size>>>((T *)target, (T *)source, width, height, (T)scale, (T)d, boundary, add);
-	CHECK_LAUNCH_ERROR();
+    GaussianFilterSTX_GPU_kernel<<<grid_size, block_size>>>((T *)target, (T *)source, width, height, (T)scale, (T)d, boundary, add);
+    CHECK_LAUNCH_ERROR();
 }
 
 template void GaussianFilterSTY_GPU<float>(float* target, float* source, int width, int height, float scale, float d, BoundaryCondition boundary, bool add);
