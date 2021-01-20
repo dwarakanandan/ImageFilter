@@ -26,13 +26,32 @@ __device__ int _max(int a, int b)
 
 
 template <typename T>
-__global__ void GaussianFilterSTY_GPU_kernel(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add) {
+__global__ void GaussianFilterSTY_GPU_kernel(T* __restrict__ target, T* __restrict__ source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add) {
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
     
-    int bound = (int)floor(GAUSSIAN_RANGE * scale);
+	int bound = (int)floor(GAUSSIAN_RANGE * scale);
+	int guard = ((bound / height) + 1) * height;
+
     T weight = T(0);
 	T r_weight = T(1);
+
+	if (boundary == BoundaryCondition::Renormalize)
+	{
+		weight = gaussian(d, scale);
+
+		for (int y0 = 1; y0 <= bound; y0++)
+		{
+			T ga = gaussian(-y0 + d, scale);
+			T gb = gaussian(y0 + d, scale);
+			int ya = y - y0;
+			int yb = y + y0;
+			if (ya >= 0) weight += ga;
+			if (yb < height) weight += gb;
+		}
+		r_weight = 1.0f / weight;
+	}
+
 	if (boundary != BoundaryCondition::Renormalize)
 	{
 		weight = gaussian(d, scale);
@@ -47,16 +66,42 @@ __global__ void GaussianFilterSTY_GPU_kernel(T* target, T* source, int width, in
     }
 
     T g = gaussian(d, scale);
-    T t = source[x + y * width] * g;
+	T t = source[x + y * width] * g;
 
-    for (int y0 = 1; y0 <= bound; y0++)
-    {
-        T ga = gaussian(-y0 + d, scale);
-        T gb = gaussian(y0 + d, scale);
-        int ya = _max(0, y - y0);
-        int yb = _min(y + y0, height - 1);
-        t += source[x + ya * width] * ga + source[x + yb * width] * gb;
-    }
+	if ((boundary == BoundaryCondition::Zero) || (boundary == BoundaryCondition::Renormalize))
+	{
+		for (int y0 = 1; y0 <= bound; y0++)
+		{
+			T ga = gaussian(-y0 + d, scale);
+			T gb = gaussian(y0 + d, scale);
+			int ya = y - y0;
+			int yb = y + y0;
+			if (ya >= 0) t += source[x + ya * width] * ga;
+			if (yb < height) t += source[x + yb * width] * gb;
+		}
+	}
+	else if (boundary == BoundaryCondition::Repeat)
+	{
+		for (int y0 = 1; y0 <= bound; y0++)
+		{
+			T ga = gaussian(-y0 + d, scale);
+			T gb = gaussian(y0 + d, scale);
+			int ya = (y - y0 + guard) % height;
+			int yb = (y + y0) % height;
+			t += source[x + ya * width] * ga + source[x + yb * width] * gb;
+		}
+	}
+	else // if (boundary == BoundaryCondition::Border)
+	{
+		for (int y0 = 1; y0 <= bound; y0++)
+		{
+			T ga = gaussian(-y0 + d, scale);
+			T gb = gaussian(y0 + d, scale);
+			int ya = _max(0, y - y0);
+			int yb = _min(y + y0, height - 1);
+			t += source[x + ya * width] * ga + source[x + yb * width] * gb;
+		}
+	}
 
     if (add) target[x + y * width] += t * r_weight;
     else target[x + y * width] = t * r_weight;
@@ -79,32 +124,80 @@ void GaussianFilterSTY_GPU(T* target, T* source, int width, int height, T scale,
 }
 
 template <typename T>
-__global__ void GaussianFilterSTX_GPU_kernel(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add) {
+__global__ void GaussianFilterSTX_GPU_kernel(T* __restrict__ target, T* __restrict__ source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add) {
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
-    
-    int bound = (int)floor(GAUSSIAN_RANGE * scale);
 
-    T weight = gaussian(d, scale);
-    for (int x0 = 1; x0 <= bound; x0++)
-    {
-        T ga = gaussian(-x0 + d, scale);
-        T gb = gaussian(x0 + d, scale);
-        weight += ga + gb;
+	int bound = (int)floor(GAUSSIAN_RANGE * scale);
+	int guard = ((bound / width) + 1) * width;
+
+	T weight = T(0);
+	T r_weight = T(1);
+
+	if (boundary == BoundaryCondition::Renormalize)
+	{
+		weight = gaussian(d, scale);
+		for (int x0 = 1; x0 <= bound; x0++)
+		{
+			T ga = gaussian(-x0 + d, scale);
+			T gb = gaussian(x0 + d, scale);
+			int xa = x - x0;
+			int xb = x + x0;
+			if (xa >= 0) weight += ga;
+			if (xb < width) weight += gb;
+		}
+		r_weight = 1.0f / weight;
+	}
+
+	if (boundary != BoundaryCondition::Renormalize)
+	{
+		weight = gaussian(d, scale);
+		for (int x0 = 1; x0 <= bound; x0++)
+		{
+			T ga = gaussian(-x0 + d, scale);
+			T gb = gaussian(x0 + d, scale);
+			weight += ga + gb;
+		}
+		r_weight = 1.0f / weight;
     }
-    T r_weight = 1.0f / weight;
 
     T g = gaussian(d, scale);
-    T t = source[x + y * width] * g;
-
-    for (int x0 = 1; x0 <= bound; x0++)
-    {
-        T ga = gaussian(-x0 + d, scale);
-        T gb = gaussian(x0 + d, scale);
-        int xa = _max(0, x - x0);
-        int xb = _min(x + x0, width - 1);
-        t += source[xa + y * width] * ga + source[xb + y * width] * gb;
-    }
+	T t = source[x + y * width] * g;
+	
+	if ((boundary == BoundaryCondition::Zero) || (boundary == BoundaryCondition::Renormalize))
+	{
+		for (int x0 = 1; x0 <= bound; x0++)
+		{
+			T ga = gaussian(-x0 + d, scale);
+			T gb = gaussian(x0 + d, scale);
+			int xa = x - x0;
+			int xb = x + x0;
+			if (xa >= 0) t += source[xa + y * width] * ga;
+			if (xb < width) t += source[xb + y * width] * gb;
+		}
+	}
+	else if (boundary == BoundaryCondition::Repeat)
+	{
+		for (int x0 = 1; x0 <= bound; x0++)
+		{
+			T ga = gaussian(-x0 + d, scale);
+			T gb = gaussian(x0 + d, scale);
+			int xa = (x - x0 + guard) % width;
+			int xb = (x + x0) % width;
+			t += source[xa + y * width] * ga + source[xb + y * width] * gb;
+		}
+	}
+	else // if (boundary == BoundaryCondition::Border)
+	{
+		for (int x0 = 1; x0 <= bound; x0++)
+		{
+			T ga = gaussian(-x0 + d, scale);
+			T gb = gaussian(x0 + d, scale);
+			int xa = _max(0, x - x0);
+			int xb = _min(x + x0, width - 1);
+			t += source[xa + y * width] * ga + source[xb + y * width] * gb;
+		}
+	}
 
     if (add) target[x + y * width] += t * r_weight;
     else target[x + y * width] = t * r_weight;
