@@ -4,7 +4,7 @@
 #include "float_image.h"
 #include <vector>
 #include <algorithm>
-
+#define GAUSSIAN_RANGE 3
 template <typename T>
 class CudaImage {
 public:
@@ -20,6 +20,12 @@ protected:
 	std::vector<T*, LoggingAllocator<void *>> m_data;
 	std::vector<size_t, LoggingAllocator<size_t>> m_pitch;
 	bool m_mapped;
+	T* gaussian_array_x;
+	T* gaussian_array_y;
+	// __device__ __constant__ T r_weight_const_X;
+	// __device__ __constant__ T r_weight_const_Y;
+	// __device__ __constant__ T g_const_x;
+	// __device__ __constant__ T g_const_y;
 
 protected:
 	void dealloc();
@@ -126,6 +132,16 @@ public:
 	void GaussianSplatSTY(int target, const CudaImage<T>& source, int component, T scale, T dy, BoundaryCondition boundary, bool add);
 
 	void CopyComponent(int target, const CudaImage<T>& source, int component);
+
+	void SetGaussianArrays(T dx,T dy,T scale);
+
+	void SetGaussianArrays(T* gaussian_array_x,T* gaussian_array_y);
+
+	T* GetGaussianArrayX() { return gaussian_array_x;}
+
+	T* GetGaussianArrayY() { return gaussian_array_y;}
+
+	void SetConstants(T dx,T dy,T scale);
 
 private:
 	void GaussianFilterSTX(T* target, T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add);
