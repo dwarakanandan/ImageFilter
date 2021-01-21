@@ -172,6 +172,7 @@ void processImage_internal_temp(ComputeImage& fimage_input, bool raw_input, COMP
 	}
 	if (blur > COMPUTE_TYPE(0))
 	{
+		fimage.SetGaussianArrays(dx ,dy, blur);
 		fimage.GaussianFilter(fimage, scratch, blur, dx, dy, boundary);
 	}
 	else if (blur < COMPUTE_TYPE(0))
