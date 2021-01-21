@@ -179,6 +179,7 @@ void processImage_internal_temp(ComputeImage& fimage_input, bool raw_input, COMP
 		
 		ComputeImage base, scratch0, mod;
 		CudaImage<COMPUTE_TYPE> base_cuda,scratch0_cuda,mod_cuda;
+		base_cuda.SetGaussianArrays(dx,dy,-blur);
 		base_cuda.GaussianFilter(fimage, scratch, -blur, dx, dy, boundary);
 		base_cuda.SubtractImage(fimage, base_cuda);
 		mod_cuda.resize(fimage);
@@ -196,6 +197,8 @@ void processImage_internal_temp(ComputeImage& fimage_input, bool raw_input, COMP
 				mappedY.CreateMapped((double*)y, fimage.GetWidth(), fimage.GetHeight(), 1);
 				mappedX_cuda.Upload(mappedX);
 				mappedY_cuda.Upload(mappedY);
+				mappedY_cuda.SetGaussianArrays(base_cuda.GetGaussianArrayX(),base_cuda.GetGaussianArrayY());
+				//std::cout<<"Pitch0:"<<mappedX_cuda.GetPitch(0)<<",Pitch1:"<<mappedX_cuda.GetPitch(1)<<",Pitch2:"<<mappedX_cuda.GetPitch(2)<<",Width:"<<mappedX_cuda.GetWidth();
 				mappedY_cuda.GaussianFilter(mappedX_cuda, scratch0_cuda, -blur, dx, dy, boundary, true);
 				mappedY_cuda.Download(mappedY);
 
@@ -216,6 +219,7 @@ void processImage_internal_temp(ComputeImage& fimage_input, bool raw_input, COMP
 				mappedY.CreateMapped((double*)y, fimage.GetWidth(), fimage.GetHeight(), 1);
 				mappedX_cuda.Upload(mappedX);
 				mappedY_cuda.Upload(mappedY);
+				mappedX_cuda.SetGaussianArrays(base_cuda.GetGaussianArrayX(),base_cuda.GetGaussianArrayY());
 				mappedX_cuda.GaussianSplat(mappedY_cuda, scratch0_cuda, -blur, dx, dy, boundary, true);
 				mappedX_cuda.Download(mappedX);
 			}

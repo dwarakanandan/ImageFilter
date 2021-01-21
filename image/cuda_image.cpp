@@ -1,7 +1,7 @@
 #include "cuda_image.h"
 #include "../kernel/kernel_cu.h"
 #include "../kernel/filter.h"
-
+#include <cmath>
 template <typename T> void CudaImage<T>::dealloc()
 {
 	if (m_mapped) return;
@@ -285,7 +285,47 @@ template <typename T> void CudaImage<T>::ScaleFast(const CudaImage<T>& source)
 	// std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
 	// exit(-1);
 }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+double gaussian_host(double x0, double size)
+{
+	double d = x0 / size;
+	return exp(-0.5 * d * d);
+}
 
+
+template <typename T> void CudaImage<T>::SetGaussianArrays(T dx,T dy, T scale){
+	std::cout<<"Setting GaussianArrays";
+	int bound = (int)floor(GAUSSIAN_RANGE * scale);
+	T gaussian_array_x_temp[bound*2];
+	T gaussian_array_y_temp[bound*2];
+	for (int x0 = 1; x0 <= bound; x0++)
+	{
+		T ga_x = gaussian_host(-x0 + dx, scale);
+		gaussian_array_x_temp[x0-1] = ga_x;
+		T gb_x = gaussian_host(x0 + dx, scale);
+		gaussian_array_x_temp[x0 - 1 + bound] = gb_x;
+
+		T ga_y = gaussian_host(-x0 + dy, scale);
+		gaussian_array_y_temp[x0-1] = ga_y;
+		T gb_y = gaussian_host(x0 + dy, scale);
+		gaussian_array_y_temp[x0 - 1 + bound] = gb_y;
+	}
+	cudaMalloc((void **)&gaussian_array_x,bound*2*sizeof(T));
+	cudaMemcpy(gaussian_array_x,gaussian_array_x_temp,bound*2*sizeof(T),cudaMemcpyHostToDevice);
+
+	cudaMalloc((void **)&gaussian_array_y,bound*2*sizeof(T));
+	cudaMemcpy(gaussian_array_y,gaussian_array_y_temp,bound*2*sizeof(T),cudaMemcpyHostToDevice);
+
+	SetConstants(dx,dy,scale);
+	CHECK_LAUNCH_ERROR();
+	}
+
+template <typename T> void CudaImage<T>::SetGaussianArrays(T* gaussian_array_x_temp,T* gaussian_array_y_temp){
+	gaussian_array_x = gaussian_array_x_temp;
+	gaussian_array_y = gaussian_array_y_temp;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 template <typename T> void CudaImage<T>::GaussianFilter(const CudaImage<T>& source, CudaImage<T>& scratch, T scale, T dx, T dy, BoundaryCondition boundary, bool add)
 {
 	resize(source);
@@ -301,6 +341,7 @@ template <typename T> void CudaImage<T>::GaussianSplat(const CudaImage<T>& sourc
 {
 	resize(source);
 	scratch.resize(source);
+	// SetGaussianArrays(dx,dy,scale);
 	if ((boundary == BoundaryCondition::Repeat) || (boundary == BoundaryCondition::Zero))
 	{
 		for (unsigned int i = 0; i < m_data.size(); i++)
@@ -370,7 +411,7 @@ template <typename T> void CudaImage<T>::GaussianFilterSTY(T* target, T* source,
 
 template <typename T> void CudaImage<T>::GaussianSplatSTX(T* target,const T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add)
 {
-	GaussianSplatSTX_GPU(target, source, width, height, scale, d, boundary, add);
+	GaussianSplatSTX_GPU(target, source, width, height, scale, d, boundary, add,gaussian_array_x);
 	// std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
 	
 	// exit(-1);
@@ -378,11 +419,14 @@ template <typename T> void CudaImage<T>::GaussianSplatSTX(T* target,const T* sou
 
 template <typename T> void CudaImage<T>::GaussianSplatSTY(T* target,const T* source, int width, int height, T scale, T d, BoundaryCondition boundary, bool add)
 {
-	GaussianSplatSTY_GPU(target, source, width, height, scale, d, boundary, add);
+	GaussianSplatSTY_GPU(target, source, width, height, scale, d, boundary, add,gaussian_array_y);
 	// std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
 	
 	// exit(-1);
 }
+
+
+
 
 template class CudaImage<float>;
 template class CudaImage<double>;
