@@ -8,6 +8,8 @@
 #define BLOCK_SIZE 32
 #define GAUSSIAN_RANGE 3
 #define COMPUTE_TYPE double
+#define SHARED_MEM_SIZE 150
+#define MAX_SCALE_SHARED_ATOMICS 19
 
 #if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 600
 #else
@@ -341,13 +343,106 @@ __global__ void GaussianSplatSTX_GPU_kernel(T* __restrict__ target,const T* __re
 			T ga = gaussian_array[x0-1];
 			// T gb = gaussian(x0 + d, scale);
 			T gb = gaussian_array[x0+bound-1];
-            int xa = max(0, x - x0);
-            int xb = min(x + x0, width - 1);
-            atomicAdd(&target[xa + y * width],t*ga);
-            atomicAdd(&target[xb + y * width],t*gb);
+            int xa = _max(0, x - x0);
+            int xb = _min(x + x0, width - 1);
+			atomicAdd(&target[xa + y * width],t*ga);
+			atomicAdd(&target[xb + y * width],t*gb);
+		}
+		atomicAdd(&target[x + y * width],t*g_const_x);
+	}
+}
+
+template <typename T>
+__global__ void GaussianSplatSTX_SharedAtomics_GPU_kernel(T* __restrict__ target,const T* __restrict__ source,int width, int height, T scale, T d, BoundaryCondition boundary, bool add, T* __restrict__ gaussian_array) {
+    int bound = (int)floor(GAUSSIAN_RANGE * scale);
+    
+    int x = threadIdx.x + blockIdx.x * blockDim.x;
+    int y = threadIdx.y + blockIdx.y * blockDim.y;
+	// if (!add) std::fill(target, target + width * height, T(0));
+	
+	__shared__ T shared_target_pixels[BLOCK_SIZE][SHARED_MEM_SIZE];
+
+	if(threadIdx.x == 0) {
+		for(int j = 0; j < SHARED_MEM_SIZE; j++) {
+			shared_target_pixels[threadIdx.y][j] = 0;
+		}
+	}
+
+	__syncthreads();
+
+	int midIndex = SHARED_MEM_SIZE/2;
+	int midXIndex = (blockIdx.x * blockDim.x) + BLOCK_SIZE/2;
+
+	if (boundary == BoundaryCondition::Renormalize)
+	{
+			T weight = g_const_x;
+			for (int x0 = 1; x0 <= bound; x0++)
+			{
+				// T ga = gaussian(-x0 + d, scale);
+				T ga = gaussian_array[x0-1];
+				// T gb = gaussian(x0 + d, scale);
+				T gb = gaussian_array[x0+bound-1];
+				int xa = x - x0;
+				int xb = x + x0;
+				if (xa >= 0) weight += ga;
+				if (xb < width) weight += gb;
+			}
+			T r_weight = 1.0f / weight;
+			for (int y = 0; y < height; y++)
+			{
+				T t = source[x + y * width] * r_weight;
+				for (int x0 = 1; x0 <= bound; x0++)
+				{
+					// T ga = gaussian(-x0 + d, scale);
+					T ga = gaussian_array[x0-1];
+					// T gb = gaussian(x0 + d, scale);
+					T gb = gaussian_array[x0+bound-1];
+					int xa = x - x0;
+					int xb = x + x0;
+					if (xa >= 0) atomicAdd(&target[xa + y * width],t * ga);
+					if (xb < width) atomicAdd(&target[xb + y * width],t * gb);
+				}
+				// T g = gaussian(d, scale);
+				atomicAdd(&target[x + y * width],t * g_const_x);
+			}
+		// }
+	}
+	else // if (boundary == BoundaryCondition::Border)
+	{
+		T t = source[x + y * width] * r_weight_const_X;
+        for (int x0 = 1; x0 <= bound; x0++)
+        {
+			// T ga = gaussian(-x0 + d, scale);
+			T ga = gaussian_array[x0-1];
+			// T gb = gaussian(x0 + d, scale);
+			T gb = gaussian_array[x0+bound-1];
+            int xa = _max(0, x - x0);
+            int xb = _min(x + x0, width - 1);
+
+			int xaOffset = midXIndex - xa;
+			int xbOffset = midXIndex - xb;
+			atomicAdd(&(shared_target_pixels[threadIdx.y][midIndex - xaOffset]), t*ga);
+			atomicAdd(&(shared_target_pixels[threadIdx.y][midIndex - xbOffset]), t*gb);
         }
-        atomicAdd(&target[x + y * width],t*g_const_x);
-        
+
+		int xOffset = midXIndex - x;
+        atomicAdd(&(shared_target_pixels[threadIdx.y][midIndex - xOffset]), t*g_const_x);
+	}
+
+	__syncthreads();
+
+	if(threadIdx.x == 0) {
+		int minXIndex = _max(0, (blockIdx.x * blockDim.x) - bound);
+		int minXOffset = midXIndex - minXIndex;
+		int readIndexStart = midIndex - minXOffset;
+
+		int maxXIndex = _min((blockIdx.x * blockDim.x) + BLOCK_SIZE + bound, width - 1);
+		int maxXOffset = midXIndex - maxXIndex;
+		int readIndexEnd = midIndex - maxXOffset;
+		for(int j = readIndexStart; j <= readIndexEnd; j++) {
+			atomicAdd(&target[minXIndex + y * width], shared_target_pixels[threadIdx.y][j]);
+			minXIndex += 1;
+		}
 	}
 }
 
@@ -360,8 +455,12 @@ void GaussianSplatSTX_GPU(T* target,const T* source, int width, int height, T sc
 	dim3 grid_size;
 	grid_size.x = (width + block_size.x - 1) / block_size.x;
 	grid_size.y = (height + block_size.y - 1) / block_size.y;
-    grid_size.z = 1;
-	GaussianSplatSTX_GPU_kernel<<<grid_size, block_size>>>((T *)target, (T *)source, width, height,(T)scale, (T)d, boundary, add,(T*) gaussian_array_x);
+	grid_size.z = 1;
+	if(scale <= MAX_SCALE_SHARED_ATOMICS) {
+		GaussianSplatSTX_SharedAtomics_GPU_kernel<<<grid_size, block_size>>>((T *)target, (T *)source, width, height,(T)scale, (T)d, boundary, add,(T*) gaussian_array_x);
+	} else {
+		GaussianSplatSTX_GPU_kernel<<<grid_size, block_size>>>((T *)target, (T *)source, width, height,(T)scale, (T)d, boundary, add,(T*) gaussian_array_x);
+	}
     CHECK_LAUNCH_ERROR();
 }
 
@@ -380,8 +479,8 @@ __global__ void GaussianSplatSTY_GPU_kernel(T* __restrict__ target,const T* __re
 			T ga = gaussian_array[y0 - 1];
 			// T gb = gaussian(y0 + d, scale);
 			T gb = gaussian_array[y0 - 1 + bound];
-			int ya = max(0, y - y0);
-			int yb = min(y + y0, height - 1);
+			int ya = _max(0, y - y0);
+			int yb = _min(y + y0, height - 1);
 			atomicAdd(&target[x + ya * width],t*ga);
 			atomicAdd(&target[x + yb * width],t*gb);
 		}
