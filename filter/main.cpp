@@ -72,13 +72,13 @@ void processImage_internal(ComputeImage& fimage, bool raw_input, COMPUTE_TYPE ga
 	}
 	else if (blur < COMPUTE_TYPE(0))
 	{
+		
 		ComputeImage base, scratch0, mod;
 		base.GaussianFilter(fimage, scratch, -blur, dx, dy, boundary);
 		base.SubtractImage(fimage, base);
 		mod.resize(fimage);
 		unsigned int m, n;
 		m = n = fimage.GetWidth() * fimage.GetHeight();
-
 		unsigned int component = 0;
 		scratch0.resize(fimage.GetWidth(), fimage.GetHeight(), 1);
 		auto l1 = [&](unsigned int m, unsigned int n, const double* x, double* y)
@@ -145,6 +145,134 @@ void processImage_internal(ComputeImage& fimage, bool raw_input, COMPUTE_TYPE ga
 	if (gamma_output != COMPUTE_TYPE(1)) fimage.Gamma(COMPUTE_TYPE(1) / gamma_output);
 }
 
+template <class ComputeImage>
+void processImage_internal_cuda(ComputeImage& fimage_input, bool raw_input, COMPUTE_TYPE gamma_input, bool signed_input, bool raw_output, COMPUTE_TYPE gamma_output, bool signed_output, COMPUTE_TYPE scale, COMPUTE_TYPE blur, COMPUTE_TYPE damp, COMPUTE_TYPE dx, COMPUTE_TYPE dy, BoundaryCondition boundary, bool cuda_usage, int device)
+{
+	CudaImage<COMPUTE_TYPE> fimage;
+	fimage.Upload(fimage_input);
+	CudaImage<COMPUTE_TYPE> scratch;
+	if (gamma_input != COMPUTE_TYPE(1)) fimage.Gamma(gamma_input);
+	if (raw_input)
+	{
+		if (signed_input)
+		{
+			fimage.Attenuate(COMPUTE_TYPE(2));
+			fimage.Add(COMPUTE_TYPE(-1));
+		}
+	}
+	else
+	{
+		fimage.ConvertRgb2Lab(fimage);
+	}
+	if (scale != COMPUTE_TYPE(1))
+	{
+		scratch.resize((int)std::floor(fimage.GetWidth() * scale + (0.5)), (int)std::floor(fimage.GetHeight() * scale + (0.5)), fimage.GetComponents());
+		scratch.ScaleFast(fimage);
+		fimage.Copy(scratch);
+	}
+	if (blur > COMPUTE_TYPE(0))
+	{
+		fimage.SetGaussianArrays(dx ,dy, blur);
+		fimage.GaussianFilter(fimage, scratch, blur, dx, dy, boundary);
+	}
+	else if (blur < COMPUTE_TYPE(0))
+	{
+		
+		ComputeImage base, scratch0, mod;
+		CudaImage<COMPUTE_TYPE> base_cuda,scratch0_cuda,mod_cuda;
+		base_cuda.SetGaussianArrays(dx,dy,-blur);
+		base_cuda.GaussianFilter(fimage, scratch, -blur, dx, dy, boundary);
+		base_cuda.SubtractImage(fimage, base_cuda);
+		mod_cuda.resize(fimage);
+		unsigned int m, n;
+		m = n = fimage.GetWidth() * fimage.GetHeight();
+		unsigned int component = 0;
+		scratch0_cuda.resize(fimage.GetWidth(), fimage.GetHeight(), 1);
+		auto l1 = [&](unsigned int m, unsigned int n, const double* x, double* y)
+		{
+			if (sizeof(COMPUTE_TYPE) == sizeof(double))
+			{
+				ComputeImage mappedX, mappedY;
+				CudaImage<COMPUTE_TYPE> mappedX_cuda, mappedY_cuda;
+				mappedX.CreateMapped((double*)x, fimage.GetWidth(), fimage.GetHeight(), 1);
+				mappedY.CreateMapped((double*)y, fimage.GetWidth(), fimage.GetHeight(), 1);
+				mappedX_cuda.Upload(mappedX);
+				mappedY_cuda.Upload(mappedY);
+				mappedY_cuda.SetGaussianArrays(base_cuda.GetGaussianArrayX(),base_cuda.GetGaussianArrayY());
+				//std::cout<<"Pitch0:"<<mappedX_cuda.GetPitch(0)<<",Pitch1:"<<mappedX_cuda.GetPitch(1)<<",Pitch2:"<<mappedX_cuda.GetPitch(2)<<",Width:"<<mappedX_cuda.GetWidth();
+				mappedY_cuda.GaussianFilter(mappedX_cuda, scratch0_cuda, -blur, dx, dy, boundary, true);
+				mappedY_cuda.Download(mappedY);
+
+			}
+			else
+			{
+				std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
+				exit(-1);
+			}
+		};
+		auto l2 = [&](unsigned int m, unsigned int n, double* x, const double* y)
+		{
+			if (sizeof(COMPUTE_TYPE) == sizeof(double))
+			{
+				ComputeImage mappedX, mappedY;
+				CudaImage<COMPUTE_TYPE> mappedX_cuda, mappedY_cuda;
+				mappedX.CreateMapped((double*)x, fimage.GetWidth(), fimage.GetHeight(), 1);
+				mappedY.CreateMapped((double*)y, fimage.GetWidth(), fimage.GetHeight(), 1);
+				mappedX_cuda.Upload(mappedX);
+				mappedY_cuda.Upload(mappedY);
+				mappedX_cuda.SetGaussianArrays(base_cuda.GetGaussianArrayX(),base_cuda.GetGaussianArrayY());
+				mappedX_cuda.GaussianSplat(mappedY_cuda, scratch0_cuda, -blur, dx, dy, boundary, true);
+				mappedX_cuda.Download(mappedX);
+			}
+			else
+			{
+				std::cout << "Function not implemented in " << __FILE__ << ":" << __LINE__ << std::endl;
+				exit(-1);
+			}
+		};
+		lsmrWrapper<decltype(l1), decltype(l2)> lsmr(l1, l2);
+		lsmr.SetOutputStream(std::cout);
+		lsmr.SetMaximumNumberOfIterations(4 * n);
+#ifndef USE_LSQR
+		lsmr.SetLocalSize(10000);
+#endif
+		// effectively set tolerances to epsilon
+		lsmr.SetToleranceA(1e-12);
+		lsmr.SetToleranceB(1e-12);
+		lsmr.SetEpsilon(1.0e-20);
+		lsmr.SetDamp(damp);
+		base_cuda.Download(base);
+		mod_cuda.Download(mod);
+		for (unsigned int c = 0; c < fimage.GetComponents(); c++)
+		{
+			lsmr.Solve(m, n, base.GetArray(c), mod.GetArray(c));
+		}
+		mod_cuda.Upload(mod);
+		fimage.AddImage(fimage, mod_cuda);
+	}
+	if (raw_output)
+	{
+		if (signed_output)
+		{
+			fimage.Attenuate(COMPUTE_TYPE(0.5));
+			fimage.Add(COMPUTE_TYPE(0.5));
+		}
+	}
+	else
+	{
+		fimage.ConvertLab2Rgb(fimage);
+	}
+	if (gamma_output != COMPUTE_TYPE(1)) fimage.Gamma(COMPUTE_TYPE(1) / gamma_output);
+
+
+	fimage.Download(fimage_input);
+}
+
+
+
+
+
+
 void processImage(char *sName, char *dName, bool raw_image, COMPUTE_TYPE gamma, bool signed_image, COMPUTE_TYPE scale, COMPUTE_TYPE blur, COMPUTE_TYPE damp, COMPUTE_TYPE dx, COMPUTE_TYPE dy, BoundaryCondition boundary, bool cuda_usage, int device)
 {
 	FloatImage<COMPUTE_TYPE> fimage;
@@ -162,12 +290,12 @@ void processImage(char *sName, char *dName, bool raw_image, COMPUTE_TYPE gamma, 
 	if (cuda_usage)
 	{
 		CudaImage<COMPUTE_TYPE> cimage, scratch;
-		cimage.Upload(fimage);
-		processImage_internal(cimage, 
+		// cimage.Upload(fimage);
+		processImage_internal_cuda(fimage, 
 			raw_image || (!fixed_input), fixed_input ? gamma : COMPUTE_TYPE(1), signed_image && fixed_input, 
 			raw_image || (!fixed_output), fixed_output ? gamma : COMPUTE_TYPE(1), signed_image && fixed_output, 
 			scale, blur, damp, dx, dy, boundary, cuda_usage, device);
-		cimage.Download(fimage);
+		// cimage.Download(fimage);
 	}
 	else
 	{
