@@ -146,7 +146,7 @@ void processImage_internal(ComputeImage& fimage, bool raw_input, COMPUTE_TYPE ga
 }
 
 template <class ComputeImage>
-void processImage_internal_temp(ComputeImage& fimage_input, bool raw_input, COMPUTE_TYPE gamma_input, bool signed_input, bool raw_output, COMPUTE_TYPE gamma_output, bool signed_output, COMPUTE_TYPE scale, COMPUTE_TYPE blur, COMPUTE_TYPE damp, COMPUTE_TYPE dx, COMPUTE_TYPE dy, BoundaryCondition boundary, bool cuda_usage, int device)
+void processImage_internal_cuda(ComputeImage& fimage_input, bool raw_input, COMPUTE_TYPE gamma_input, bool signed_input, bool raw_output, COMPUTE_TYPE gamma_output, bool signed_output, COMPUTE_TYPE scale, COMPUTE_TYPE blur, COMPUTE_TYPE damp, COMPUTE_TYPE dx, COMPUTE_TYPE dy, BoundaryCondition boundary, bool cuda_usage, int device)
 {
 	CudaImage<COMPUTE_TYPE> fimage;
 	fimage.Upload(fimage_input);
@@ -291,7 +291,7 @@ void processImage(char *sName, char *dName, bool raw_image, COMPUTE_TYPE gamma, 
 	{
 		CudaImage<COMPUTE_TYPE> cimage, scratch;
 		// cimage.Upload(fimage);
-		processImage_internal_temp(fimage, 
+		processImage_internal_cuda(fimage, 
 			raw_image || (!fixed_input), fixed_input ? gamma : COMPUTE_TYPE(1), signed_image && fixed_input, 
 			raw_image || (!fixed_output), fixed_output ? gamma : COMPUTE_TYPE(1), signed_image && fixed_output, 
 			scale, blur, damp, dx, dy, boundary, cuda_usage, device);
